@@ -1,0 +1,21 @@
+name = "classic-slots"
+main = "src/worker.js"
+compatibility_date = "2024-09-01"
+
+# KV Namespace — buat dulu dengan:
+# wrangler kv:namespace create SLOTS_KV
+# lalu isi id-nya di bawah
+[[kv_namespaces]]
+binding = "SLOTS_KV"
+id = "GANTI_DENGAN_KV_NAMESPACE_ID_KAMU"
+
+# Environment Variables (JANGAN taruh password di sini langsung!)
+# Gunakan Cloudflare Dashboard → Workers → Settings → Variables
+# Atau via CLI:
+#   wrangler secret put ADMIN_PASSWORD
+#   wrangler secret put SESSION_SECRET
+#
+# Contoh untuk dev lokal saja (jangan commit ke git!):
+# [vars]
+# ADMIN_PASSWORD = "password_admin_kamu"
+# SESSION_SECRET = "string_acak_min_32_karakter_ganti_ini"
