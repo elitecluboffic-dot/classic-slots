@@ -6,24 +6,16 @@
 //    SESSION_SECRET  — string acak untuk sign cookie (min 32 char)
 // ============================================================
 
-// ── Helpers ──────────────────────────────────────────────────
 function json(data, status = 200, extra = {}) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json', ...extra },
-  });
+  return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', ...extra } });
 }
 function html(body, status = 200, extra = {}) {
-  return new Response(body, {
-    status,
-    headers: { 'Content-Type': 'text/html;charset=UTF-8', ...extra },
-  });
+  return new Response(body, { status, headers: { 'Content-Type': 'text/html;charset=UTF-8', ...extra } });
 }
 function redirect(loc, extra = {}) {
   return new Response(null, { status: 302, headers: { Location: loc, ...extra } });
 }
 
-// Simple signed cookie (HMAC-SHA256)
 async function sign(value, secret) {
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
@@ -37,19 +29,16 @@ async function verify(signed, secret) {
   const expected = await sign(value, secret);
   return expected === signed ? value : null;
 }
-
 function parseCookies(req) {
   const raw = req.headers.get('Cookie') || '';
   return Object.fromEntries(raw.split(';').map(s => s.trim().split('=').map(decodeURIComponent)));
 }
-
 function makeCookie(name, value, opts = {}) {
   let c = `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax`;
   if (opts.maxAge) c += `; Max-Age=${opts.maxAge}`;
   if (opts.expires) c += `; Expires=${opts.expires}`;
   return c;
 }
-
 async function getSession(req, env) {
   const cookies = parseCookies(req);
   const raw = cookies['sess'];
@@ -58,18 +47,15 @@ async function getSession(req, env) {
   if (!payload) return null;
   try { return JSON.parse(payload); } catch { return null; }
 }
-
 async function makeSession(data, env) {
   const payload = JSON.stringify(data);
   const signed = await sign(payload, env.SESSION_SECRET || 'dev-secret-change-me');
   return makeCookie('sess', signed, { maxAge: 86400 * 7 });
 }
-
 function clearSession() {
   return makeCookie('sess', '', { expires: 'Thu, 01 Jan 1970 00:00:00 GMT' });
 }
 
-// ── KV helpers ───────────────────────────────────────────────
 async function getUser(env, username) {
   const raw = await env.SLOTS_KV.get('user:' + username.toLowerCase());
   return raw ? JSON.parse(raw) : null;
@@ -89,30 +75,17 @@ async function listUsers(env) {
 async function getSettings(env) {
   const raw = await env.SLOTS_KV.get('settings');
   if (raw) return JSON.parse(raw);
-  // defaults
-  return {
-    minBet: 10, maxBet: 1000,
-    rtp: 85,           // return-to-player %
-    winBoost: 0,       // admin win force 0=off 1=on
-    loseForce: 0,      // force lose 0=off 1=on
-    startBalance: 1000,
-    jackpotMult: 50,
-    scatterMult: 3,
-  };
+  return { minBet: 10, maxBet: 1000, rtp: 85, winBoost: 0, loseForce: 0, startBalance: 1000, jackpotMult: 50, scatterMult: 3 };
 }
 async function putSettings(env, s) {
   await env.SLOTS_KV.put('settings', JSON.stringify(s));
 }
-
-// ── Password hashing (SHA-256, simple) ───────────────────────
 async function hashPwd(pwd) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pwd + 'slots_salt_v1'));
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// ── Game logic ───────────────────────────────────────────────
 const SYMS = ['🍒','🍓','🍇','🍌','🍑','7️⃣','💎','🔔','⭐'];
-// weights per symbol (higher = more frequent)
 const BASE_WEIGHTS = [18, 15, 14, 12, 10, 6, 3, 8, 5];
 const WILD = '🔔';
 const SCATTER = '⭐';
@@ -126,23 +99,44 @@ function pickSym(weights) {
 }
 
 function spinGrid(settings) {
-  // Adjust weights based on rtp & admin overrides
-  let w = [...BASE_WEIGHTS];
-  const rtp = settings.rtp || 85; // 0-100
-  // Lower rtp → reduce high-pay symbols weight
-  const factor = rtp / 85;
-  w[5] = Math.max(1, Math.round(w[5] * factor)); // 7
-  w[6] = Math.max(1, Math.round(w[6] * factor)); // 💎
-  w[7] = Math.max(1, Math.round(w[7] * factor)); // WILD
-
+  // FORCE LOSE: generate grid yang dijamin tidak ada kombinasi menang sama sekali
   if (settings.loseForce) {
-    // Force no-win: make all high symbols very rare
-    w = [30, 25, 20, 15, 10, 1, 1, 2, 1];
+    const noWinSyms = ['🍒','🍓','🍇','🍌','🍑'];
+    const grid = [];
+    for (let c = 0; c < 5; c++) {
+      const col = [];
+      for (let r = 0; r < 3; r++) {
+        col.push(noWinSyms[(c + r * 2) % noWinSyms.length]);
+      }
+      grid.push(col);
+    }
+    // Verifikasi & fix kalau ada row yang kebetulan sama
+    for (let r = 0; r < 3; r++) {
+      const freq = {};
+      for (let c = 0; c < 5; c++) freq[grid[c][r]] = (freq[grid[c][r]] || 0) + 1;
+      for (const [s, cnt] of Object.entries(freq)) {
+        if (cnt >= 3) {
+          let replaced = 0;
+          for (let c = 0; c < 5 && replaced < cnt - 2; c++) {
+            if (grid[c][r] === s) {
+              const alt = noWinSyms.filter(x => x !== s);
+              grid[c][r] = alt[(c + r + 1) % alt.length];
+              replaced++;
+            }
+          }
+        }
+      }
+    }
+    return grid;
   }
-  if (settings.winBoost) {
-    // Boost wins: increase matching chance
-    w[6] = 15; w[5] = 15; w[7] = 18;
-  }
+
+  let w = [...BASE_WEIGHTS];
+  const factor = (settings.rtp || 85) / 85;
+  w[5] = Math.max(1, Math.round(w[5] * factor));
+  w[6] = Math.max(1, Math.round(w[6] * factor));
+  w[7] = Math.max(1, Math.round(w[7] * factor));
+
+  if (settings.winBoost) { w[6] = 15; w[5] = 15; w[7] = 18; }
 
   const grid = [];
   for (let c = 0; c < 5; c++) {
@@ -150,58 +144,42 @@ function spinGrid(settings) {
     for (let r = 0; r < 3; r++) col.push(pickSym(w));
     grid.push(col);
   }
-
-  // For winBoost: sometimes force a winning row
   if (settings.winBoost && Math.random() < 0.6) {
-    const sym = SYMS[Math.floor(Math.random() * 7)]; // pick non-wild, non-scatter
+    const sym = SYMS[Math.floor(Math.random() * 7)];
     const row = Math.floor(Math.random() * 3);
     for (let c = 0; c < 5; c++) grid[c][row] = sym;
   }
-
   return grid;
 }
 
 function calcWin(grid, bet, settings) {
+  // FORCE LOSE: langsung return 0, tidak perlu hitung apapun
+  if (settings.loseForce) return { win: 0, winRows: [], scatCount: 0 };
+
   const winRows = [];
   let win = 0;
   let scatCount = 0;
-
-  // Count scatters
   for (let c = 0; c < 5; c++) for (let r = 0; r < 3; r++) if (grid[c][r] === SCATTER) scatCount++;
-
   for (let r = 0; r < 3; r++) {
     const row = grid.map(col => col[r]);
-    // Check 3-of-a-kind or more with wilds
     const nonWild = row.filter(s => s !== WILD && s !== SCATTER);
     const wilds = row.filter(s => s === WILD).length;
     const freq = {};
     for (const s of nonWild) freq[s] = (freq[s] || 0) + 1;
     let bestSym = null, bestCount = 0;
     for (const [s, c] of Object.entries(freq)) {
-      if (c + wilds >= 3 && (bestSym === null || PAY_TABLE[s] > PAY_TABLE[bestSym])) {
-        bestSym = s; bestCount = c + wilds;
-      }
+      if (c + wilds >= 3 && (bestSym === null || PAY_TABLE[s] > PAY_TABLE[bestSym])) { bestSym = s; bestCount = c + wilds; }
     }
-    // All wilds
     if (!bestSym && wilds >= 3) { bestSym = '7️⃣'; bestCount = wilds; }
-
     if (bestSym && bestCount >= 3) {
       const mult = PAY_TABLE[bestSym] || 0;
-      const rowWin = bet * mult * (bestCount === 5 ? 2 : bestCount === 4 ? 1.5 : 1);
-      win += rowWin;
+      win += bet * mult * (bestCount === 5 ? 2 : bestCount === 4 ? 1.5 : 1);
       winRows.push(r);
     }
   }
-
-  // Scatter bonus
-  if (scatCount >= 3) {
-    win += bet * (settings.scatterMult || 3) * scatCount;
-  }
-
+  if (scatCount >= 3) win += bet * (settings.scatterMult || 3) * scatCount;
   return { win: parseFloat(win.toFixed(2)), winRows, scatCount };
 }
-
-// ── HTML Pages ────────────────────────────────────────────────
 
 function pageLogin(error = '') {
   return `<!DOCTYPE html><html lang="id"><head>
@@ -224,9 +202,6 @@ input:focus{border-color:rgba(255,215,0,.6);box-shadow:0 0 0 3px rgba(255,215,0,
 .btn{width:100%;background:linear-gradient(135deg,#FFD700,#FFA500);border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:900;color:#3a1a00;cursor:pointer;font-family:'Nunito',sans-serif;transition:.15s}
 .btn:hover{filter:brightness(1.1)}
 .err{background:rgba(255,80,80,.15);border:1px solid rgba(255,80,80,.3);border-radius:8px;padding:10px 14px;font-size:13px;color:#ff9090;margin-bottom:16px;text-align:center}
-.note{text-align:center;font-size:12px;color:#7a5a8a;margin-top:14px}
-.admin-link{display:block;text-align:center;margin-top:14px;font-size:12px;color:#7a5a8a;text-decoration:none}
-.admin-link span{color:#FFD700;font-weight:700}
 </style></head><body>
 <div class="card">
   <div class="logo">
@@ -238,7 +213,6 @@ input:focus{border-color:rgba(255,215,0,.6);box-shadow:0 0 0 3px rgba(255,215,0,
     <button class="tab" onclick="showTab('register')">📝 Register</button>
   </div>
   ${error ? `<div class="err">⚠ ${error}</div>` : ''}
-  <!-- Login Form -->
   <form id="loginForm" method="POST" action="/login">
     <label>Username</label>
     <input name="username" type="text" placeholder="masukkan username" autocomplete="username" required/>
@@ -246,7 +220,6 @@ input:focus{border-color:rgba(255,215,0,.6);box-shadow:0 0 0 3px rgba(255,215,0,
     <input name="password" type="password" placeholder="••••••••" autocomplete="current-password" required/>
     <button class="btn" type="submit">Masuk 🎰</button>
   </form>
-  <!-- Register Form -->
   <form id="registerForm" method="POST" action="/register" style="display:none">
     <label>Username</label>
     <input name="username" type="text" placeholder="pilih username unik" autocomplete="off" required/>
@@ -386,7 +359,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .act-btn.red:hover{background:rgba(255,80,80,.18)}
 .toast{position:fixed;bottom:24px;right:24px;background:#1a4aff;border-radius:10px;padding:12px 20px;color:#fff;font-weight:700;font-size:13px;z-index:9999;opacity:0;transform:translateY(10px);transition:.3s;pointer-events:none}
 .toast.show{opacity:1;transform:translateY(0)}
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9000;display:flex;align-items:center;justify-content:center;display:none}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9000;display:none;align-items:center;justify-content:center}
 .modal-overlay.show{display:flex}
 .modal{background:#0a0a1a;border:1px solid rgba(100,180,255,.2);border-radius:16px;padding:28px;width:min(340px,90vw)}
 .modal h4{font-size:15px;font-weight:800;color:#fff;margin-bottom:16px}
@@ -406,9 +379,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <a href="/admin/logout" class="hbtn red">🚪 Logout</a>
   </div>
 </div>
-
 <div class="content">
-  <!-- Stats -->
   <div class="grid-2">
     <div class="card">
       <h3>📊 Statistik Global</h3>
@@ -419,7 +390,6 @@ tr:hover td{background:rgba(255,255,255,.02)}
       <div class="stat-row"><span class="stat-label">Total Spin</span><span class="stat-val">${users.reduce((a,u)=>a+(u.spins||0),0)}</span></div>
       <div class="stat-row"><span class="stat-label">User Banned</span><span class="stat-val red">${users.filter(u=>u.banned).length}</span></div>
     </div>
-
     <div class="card">
       <h3>🎮 Override Permainan</h3>
       <form id="overrideForm">
@@ -428,7 +398,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
           <label class="switch"><input type="checkbox" id="winBoost" ${settings.winBoost ? 'checked' : ''}><span class="slider"></span></label>
         </div>
         <div class="toggle-row">
-          <div><div class="toggle-label">💸 Force Lose</div><div class="toggle-sub">Paksa kalah semua user (override win boost)</div></div>
+          <div><div class="toggle-label">💸 Force Lose</div><div class="toggle-sub">Paksa kalah 100% semua user</div></div>
           <label class="switch"><input type="checkbox" id="loseForce" ${settings.loseForce ? 'checked' : ''}><span class="slider"></span></label>
         </div>
         <div style="margin-top:14px">
@@ -440,8 +410,6 @@ tr:hover td{background:rgba(255,255,255,.02)}
       </form>
     </div>
   </div>
-
-  <!-- Settings -->
   <div class="card" style="margin-bottom:28px">
     <h3>⚙ Pengaturan Permainan</h3>
     <form id="settingsForm">
@@ -456,20 +424,14 @@ tr:hover td{background:rgba(255,255,255,.02)}
       <button type="button" class="save-btn" onclick="saveSettings()">💾 Simpan Pengaturan</button>
     </form>
   </div>
-
-  <!-- Users Table -->
   <div class="section-title">👥 Daftar User</div>
   <div class="table-wrap">
     <table>
-      <thead><tr>
-        <th>Username</th><th>Saldo (★)</th><th>Total Bet</th><th>Total Win</th><th>Spin</th><th>Status</th><th>Aksi</th>
-      </tr></thead>
-      <tbody id="userTable">${rows || '<tr><td colspan="7" style="text-align:center;color:#4a6a8a;padding:24px">Belum ada user</td></tr>'}</tbody>
+      <thead><tr><th>Username</th><th>Saldo (★)</th><th>Total Bet</th><th>Total Win</th><th>Spin</th><th>Status</th><th>Aksi</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="7" style="text-align:center;color:#4a6a8a;padding:24px">Belum ada user</td></tr>'}</tbody>
     </table>
   </div>
 </div>
-
-<!-- Modal Set Balance -->
 <div class="modal-overlay" id="balModal">
   <div class="modal">
     <h4>💰 Atur Saldo User</h4>
@@ -480,76 +442,21 @@ tr:hover td{background:rgba(255,255,255,.02)}
     </div>
   </div>
 </div>
-
 <div class="toast" id="toast"></div>
-
 <script>
-let targetUser = '';
-function toast(msg, ok = true) {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.style.background = ok ? '#1a4aff' : '#cc2222';
-  t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2800);
-}
-
-async function saveSettings() {
-  const s = {
-    minBet: +document.getElementById('minBet').value,
-    maxBet: +document.getElementById('maxBet').value,
-    startBalance: +document.getElementById('startBalance').value,
-    scatterMult: +document.getElementById('scatterMult').value,
-    rtp: +document.getElementById('rtp').value,
-    winBoost: document.getElementById('winBoost').checked ? 1 : 0,
-    loseForce: document.getElementById('loseForce').checked ? 1 : 0,
-  };
-  const r = await fetch('/admin/api/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(s) });
-  const d = await r.json();
-  toast(d.ok ? '✅ Pengaturan disimpan!' : '❌ Gagal: ' + d.error, d.ok);
-}
-
-async function saveOverride() {
-  const s = {
-    winBoost: document.getElementById('winBoost').checked ? 1 : 0,
-    loseForce: document.getElementById('loseForce').checked ? 1 : 0,
-    rtp: +document.getElementById('rtp').value,
-  };
-  const r = await fetch('/admin/api/override', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(s) });
-  const d = await r.json();
-  toast(d.ok ? '✅ Override disimpan!' : '❌ Gagal', d.ok);
-}
-
-function setBalance(u) { targetUser = u; document.getElementById('balModal').classList.add('show'); }
-function closeModal() { document.getElementById('balModal').classList.remove('show'); targetUser = ''; }
-async function confirmBalance() {
-  const bal = +document.getElementById('newBalance').value;
-  const r = await fetch('/admin/api/set-balance', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username: targetUser, balance: bal }) });
-  const d = await r.json();
-  toast(d.ok ? '✅ Saldo diperbarui!' : '❌ Gagal', d.ok);
-  if (d.ok) setTimeout(() => location.reload(), 800);
-  closeModal();
-}
-
-async function toggleBan(u, banned) {
-  if (!confirm((banned==='1'?'Ban':'Unban')+' user '+u+'?')) return;
-  const r = await fetch('/admin/api/ban', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username: u, banned: +banned }) });
-  const d = await r.json();
-  toast(d.ok ? '✅ Status diperbarui!' : '❌ Gagal', d.ok);
-  if (d.ok) setTimeout(() => location.reload(), 800);
-}
-
-async function deleteUser(u) {
-  if (!confirm('Hapus permanen user ' + u + '?')) return;
-  const r = await fetch('/admin/api/delete-user', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username: u }) });
-  const d = await r.json();
-  toast(d.ok ? '✅ User dihapus!' : '❌ Gagal', d.ok);
-  if (d.ok) setTimeout(() => location.reload(), 800);
-}
+let targetUser='';
+function toast(msg,ok=true){const t=document.getElementById('toast');t.textContent=msg;t.style.background=ok?'#1a4aff':'#cc2222';t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2800)}
+async function saveSettings(){const s={minBet:+document.getElementById('minBet').value,maxBet:+document.getElementById('maxBet').value,startBalance:+document.getElementById('startBalance').value,scatterMult:+document.getElementById('scatterMult').value,rtp:+document.getElementById('rtp').value,winBoost:document.getElementById('winBoost').checked?1:0,loseForce:document.getElementById('loseForce').checked?1:0};const r=await fetch('/admin/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s)});const d=await r.json();toast(d.ok?'✅ Pengaturan disimpan!':'❌ Gagal: '+d.error,d.ok)}
+async function saveOverride(){const s={winBoost:document.getElementById('winBoost').checked?1:0,loseForce:document.getElementById('loseForce').checked?1:0,rtp:+document.getElementById('rtp').value};const r=await fetch('/admin/api/override',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s)});const d=await r.json();toast(d.ok?'✅ Override disimpan!':'❌ Gagal',d.ok)}
+function setBalance(u){targetUser=u;document.getElementById('balModal').classList.add('show')}
+function closeModal(){document.getElementById('balModal').classList.remove('show');targetUser=''}
+async function confirmBalance(){const bal=+document.getElementById('newBalance').value;const r=await fetch('/admin/api/set-balance',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:targetUser,balance:bal})});const d=await r.json();toast(d.ok?'✅ Saldo diperbarui!':'❌ Gagal',d.ok);if(d.ok)setTimeout(()=>location.reload(),800);closeModal()}
+async function toggleBan(u,banned){if(!confirm((banned==='1'?'Ban':'Unban')+' user '+u+'?'))return;const r=await fetch('/admin/api/ban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,banned:+banned})});const d=await r.json();toast(d.ok?'✅ Status diperbarui!':'❌ Gagal',d.ok);if(d.ok)setTimeout(()=>location.reload(),800)}
+async function deleteUser(u){if(!confirm('Hapus permanen user '+u+'?'))return;const r=await fetch('/admin/api/delete-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u})});const d=await r.json();toast(d.ok?'✅ User dihapus!':'❌ Gagal',d.ok);if(d.ok)setTimeout(()=>location.reload(),800)}
 </script>
 </body></html>`;
 }
 
-// ── Game HTML (from original, server-rendered) ────────────────
 function HTML_GAME(session, settings) {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -723,11 +630,7 @@ body{min-height:100vh;background:var(--purple-deep);font-family:'Nunito',sans-se
   </div>
 </div>
 <script>
-const CFG = {
-  minBet: ${settings.minBet},
-  maxBet: ${settings.maxBet},
-  betLevels: [${settings.minBet}, ${Math.round(settings.minBet*2)}, ${Math.round(settings.minBet*5)}, ${Math.round(settings.minBet*10)}, ${Math.round(settings.minBet*25)}, ${Math.round(settings.minBet*50)}, ${settings.maxBet}].filter((v,i,a)=>a.indexOf(v)===i)
-};
+const CFG={minBet:${settings.minBet},maxBet:${settings.maxBet},betLevels:[${settings.minBet},${Math.round(settings.minBet*2)},${Math.round(settings.minBet*5)},${Math.round(settings.minBet*10)},${Math.round(settings.minBet*25)},${Math.round(settings.minBet*50)},${settings.maxBet}].filter((v,i,a)=>a.indexOf(v)===i)};
 let audioCtx=null,soundOn=true;
 function getCtx(){if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();return audioCtx}
 function playTone(freq,type,dur,gain=.3,start=0){if(!soundOn)return;try{const c=getCtx(),t=c.currentTime+start,o=c.createOscillator(),g=c.createGain();o.connect(g);g.connect(c.destination);o.type=type;o.frequency.setValueAtTime(freq,t);g.gain.setValueAtTime(gain,t);g.gain.exponentialRampToValueAtTime(.0001,t+dur);o.start(t);o.stop(t+dur)}catch(e){}}
@@ -769,29 +672,23 @@ updBet();
 </body></html>`;
 }
 
-// ── Router ────────────────────────────────────────────────────
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
 
-    // ── GET /  → Game (must be logged in)
     if (path === '/' && method === 'GET') {
       const sess = await getSession(request, env);
       if (!sess || sess.role !== 'user') return redirect('/login');
       const settings = await getSettings(env);
       return html(HTML_GAME(sess, settings));
     }
-
-    // ── GET /login
     if (path === '/login' && method === 'GET') {
       const sess = await getSession(request, env);
       if (sess?.role === 'user') return redirect('/');
       return html(pageLogin());
     }
-
-    // ── POST /login
     if (path === '/login' && method === 'POST') {
       const form = await request.formData();
       const username = (form.get('username') || '').trim().toLowerCase();
@@ -805,13 +702,7 @@ export default {
       const cookie = await makeSession({ username: user.username, role: 'user' }, env);
       return redirect('/', { 'Set-Cookie': cookie });
     }
-
-    // ── GET /register → redirect to login with tab
-    if (path === '/register' && method === 'GET') {
-      return redirect('/login?tab=register');
-    }
-
-    // ── POST /register
+    if (path === '/register' && method === 'GET') return redirect('/login?tab=register');
     if (path === '/register' && method === 'POST') {
       const form = await request.formData();
       const username = (form.get('username') || '').trim().toLowerCase();
@@ -824,51 +715,29 @@ export default {
       const existing = await getUser(env, username);
       if (existing) return html(pageLogin('Username sudah dipakai'));
       const settings = await getSettings(env);
-      const user = {
-        username,
-        passwordHash: await hashPwd(password),
-        balance: settings.startBalance || 1000,
-        totalBet: 0,
-        totalWin: 0,
-        spins: 0,
-        banned: false,
-        createdAt: Date.now(),
-      };
+      const user = { username, passwordHash: await hashPwd(password), balance: settings.startBalance || 1000, totalBet: 0, totalWin: 0, spins: 0, banned: false, createdAt: Date.now() };
       await putUser(env, username, user);
       const cookie = await makeSession({ username, role: 'user' }, env);
       return redirect('/', { 'Set-Cookie': cookie });
     }
-
-    // ── GET /logout
-    if (path === '/logout') {
-      return redirect('/login', { 'Set-Cookie': clearSession() });
-    }
-
-    // ── API /api/me
+    if (path === '/logout') return redirect('/login', { 'Set-Cookie': clearSession() });
     if (path === '/api/me' && method === 'GET') {
       const sess = await getSession(request, env);
       if (!sess || sess.role !== 'user') return json({ error: 'Unauthorized' }, 401);
       const user = await getUser(env, sess.username);
       return json({ balance: user?.balance || 0, username: sess.username });
     }
-
-    // ── API /api/spin
     if (path === '/api/spin' && method === 'POST') {
       const sess = await getSession(request, env);
       if (!sess || sess.role !== 'user') return json({ error: 'Unauthorized' }, 401);
       const user = await getUser(env, sess.username);
       if (!user) return json({ error: 'User tidak ditemukan' }, 404);
       if (user.banned) return json({ error: 'Akun kamu dibanned' }, 403);
-
       const body = await request.json();
       const bet = parseFloat(body.bet);
       const settings = await getSettings(env);
-
-      if (isNaN(bet) || bet < settings.minBet || bet > settings.maxBet)
-        return json({ error: `Bet harus antara ${settings.minBet} - ${settings.maxBet}` });
-      if (user.balance < bet)
-        return json({ error: 'Saldo tidak cukup' });
-
+      if (isNaN(bet) || bet < settings.minBet || bet > settings.maxBet) return json({ error: `Bet harus antara ${settings.minBet} - ${settings.maxBet}` });
+      if (user.balance < bet) return json({ error: 'Saldo tidak cukup' });
       user.balance -= bet;
       const grid = spinGrid(settings);
       const { win, winRows, scatCount } = calcWin(grid, bet, settings);
@@ -877,61 +746,37 @@ export default {
       user.totalWin = parseFloat(((user.totalWin || 0) + win).toFixed(2));
       user.spins = (user.spins || 0) + 1;
       await putUser(env, sess.username, user);
-
       return json({ grid, win, winRows, scatCount, balance: user.balance });
     }
-
-    // ── ADMIN: GET /admin/login
     if (path === '/admin/login' && method === 'GET') {
       const sess = await getSession(request, env);
       if (sess?.role === 'admin') return redirect('/admin');
       return html(pageAdminLogin());
     }
-
-    // ── ADMIN: POST /admin/login
     if (path === '/admin/login' && method === 'POST') {
       const form = await request.formData();
       const password = form.get('password') || '';
-      const adminPassword = env.ADMIN_PASSWORD || 'admin123'; // fallback dev only
+      const adminPassword = env.ADMIN_PASSWORD || 'admin123';
       if (password !== adminPassword) return html(pageAdminLogin('Password admin salah'));
       const cookie = await makeSession({ username: 'admin', role: 'admin' }, env);
       return redirect('/admin', { 'Set-Cookie': cookie });
     }
-
-    // ── ADMIN: GET /admin
     if (path === '/admin' && method === 'GET') {
       const sess = await getSession(request, env);
       if (!sess || sess.role !== 'admin') return redirect('/admin/login');
       const [users, settings] = await Promise.all([listUsers(env), getSettings(env)]);
       return html(pageAdmin(users, settings));
     }
-
-    // ── ADMIN: GET /admin/logout
-    if (path === '/admin/logout') {
-      return redirect('/admin/login', { 'Set-Cookie': clearSession() });
-    }
-
-    // ── ADMIN API: POST /admin/api/settings
+    if (path === '/admin/logout') return redirect('/admin/login', { 'Set-Cookie': clearSession() });
     if (path === '/admin/api/settings' && method === 'POST') {
       const sess = await getSession(request, env);
       if (!sess || sess.role !== 'admin') return json({ error: 'Unauthorized' }, 401);
       const body = await request.json();
       const current = await getSettings(env);
-      const updated = {
-        ...current,
-        minBet: +body.minBet || current.minBet,
-        maxBet: +body.maxBet || current.maxBet,
-        startBalance: +body.startBalance ?? current.startBalance,
-        scatterMult: +body.scatterMult || current.scatterMult,
-        rtp: Math.min(99, Math.max(50, +body.rtp || current.rtp)),
-        winBoost: +body.winBoost,
-        loseForce: +body.loseForce,
-      };
+      const updated = { ...current, minBet: +body.minBet || current.minBet, maxBet: +body.maxBet || current.maxBet, startBalance: +body.startBalance ?? current.startBalance, scatterMult: +body.scatterMult || current.scatterMult, rtp: Math.min(99, Math.max(50, +body.rtp || current.rtp)), winBoost: +body.winBoost, loseForce: +body.loseForce };
       await putSettings(env, updated);
       return json({ ok: true });
     }
-
-    // ── ADMIN API: POST /admin/api/override
     if (path === '/admin/api/override' && method === 'POST') {
       const sess = await getSession(request, env);
       if (!sess || sess.role !== 'admin') return json({ error: 'Unauthorized' }, 401);
@@ -940,8 +785,6 @@ export default {
       await putSettings(env, { ...current, winBoost: +body.winBoost, loseForce: +body.loseForce, rtp: Math.min(99, Math.max(50, +body.rtp || current.rtp)) });
       return json({ ok: true });
     }
-
-    // ── ADMIN API: POST /admin/api/set-balance
     if (path === '/admin/api/set-balance' && method === 'POST') {
       const sess = await getSession(request, env);
       if (!sess || sess.role !== 'admin') return json({ error: 'Unauthorized' }, 401);
@@ -952,8 +795,6 @@ export default {
       await putUser(env, username, user);
       return json({ ok: true });
     }
-
-    // ── ADMIN API: POST /admin/api/ban
     if (path === '/admin/api/ban' && method === 'POST') {
       const sess = await getSession(request, env);
       if (!sess || sess.role !== 'admin') return json({ error: 'Unauthorized' }, 401);
@@ -964,8 +805,6 @@ export default {
       await putUser(env, username, user);
       return json({ ok: true });
     }
-
-    // ── ADMIN API: POST /admin/api/delete-user
     if (path === '/admin/api/delete-user' && method === 'POST') {
       const sess = await getSession(request, env);
       if (!sess || sess.role !== 'admin') return json({ error: 'Unauthorized' }, 401);
@@ -973,7 +812,6 @@ export default {
       await env.SLOTS_KV.delete('user:' + username.toLowerCase());
       return json({ ok: true });
     }
-
     return new Response('Not Found', { status: 404 });
   }
 };
