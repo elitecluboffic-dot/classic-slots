@@ -7,7 +7,7 @@ compatibility_date = "2024-09-01"
 # lalu isi id-nya di bawah
 [[kv_namespaces]]
 binding = "SLOTS_KV"
-id = "GANTI_DENGAN_KV_NAMESPACE_ID_KAMU"
+id = "1cdb70f9f321402c8579ff90b201884e"
 
 # Environment Variables (JANGAN taruh password di sini langsung!)
 # Gunakan Cloudflare Dashboard → Workers → Settings → Variables
