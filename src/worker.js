@@ -256,7 +256,6 @@ input:focus{border-color:rgba(255,215,0,.6);box-shadow:0 0 0 3px rgba(255,215,0,
     <input name="confirm" type="password" placeholder="ulangi password" required/>
     <button class="btn" type="submit">Daftar Sekarang ✨</button>
   </form>
-  <a class="admin-link" href="/admin/login">Login sebagai <span>Admin</span></a>
 </div>
 <script>
 function showTab(t){
