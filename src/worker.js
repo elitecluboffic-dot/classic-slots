@@ -75,7 +75,8 @@ async function listUsers(env) {
 async function getSettings(env) {
   const raw = await env.SLOTS_KV.get('settings');
   if (raw) return JSON.parse(raw);
-  return { minBet: 10, maxBet: 1000, rtp: 85, winBoost: 0, loseForce: 0, startBalance: 1000, jackpotMult: 50, scatterMult: 3 };
+  // UPDATED: semua nilai dalam satuan perak. 5000 = 5K, 100000 = 100K, dst.
+  return { minBet: 5000, maxBet: 500000, rtp: 85, winBoost: 0, loseForce: 0, startBalance: 100000, jackpotMult: 50, scatterMult: 3 };
 }
 async function putSettings(env, s) {
   await env.SLOTS_KV.put('settings', JSON.stringify(s));
@@ -282,12 +283,14 @@ input:focus{border-color:rgba(100,180,255,.5)}
 }
 
 function pageAdmin(users, settings) {
+  // UPDATED: format K untuk tampilan saldo di tabel
+  const fmtK = v => (parseFloat(v || 0) / 1000).toFixed(2) + 'K';
   const rows = users.map(u => `
     <tr>
       <td>${u.username}</td>
-      <td class="num">${parseFloat(u.balance || 0).toFixed(2)}</td>
-      <td class="num">${u.totalBet?.toFixed(2) || '0.00'}</td>
-      <td class="num">${u.totalWin?.toFixed(2) || '0.00'}</td>
+      <td class="num">${fmtK(u.balance)}</td>
+      <td class="num">${fmtK(u.totalBet)}</td>
+      <td class="num">${fmtK(u.totalWin)}</td>
       <td class="num">${u.spins || 0}</td>
       <td><span class="badge ${u.banned ? 'bad' : 'good'}">${u.banned ? 'Banned' : 'Aktif'}</span></td>
       <td>
@@ -296,6 +299,11 @@ function pageAdmin(users, settings) {
         <button class="act-btn red" onclick="deleteUser('${u.username}')">🗑 Hapus</button>
       </td>
     </tr>`).join('');
+
+  // UPDATED: statistik global dalam K
+  const totalBal = (users.reduce((a,u)=>a+(u.balance||0),0)/1000).toFixed(2);
+  const totalBet = (users.reduce((a,u)=>a+(u.totalBet||0),0)/1000).toFixed(2);
+  const totalWin = (users.reduce((a,u)=>a+(u.totalWin||0),0)/1000).toFixed(2);
 
   return `<!DOCTYPE html><html lang="id"><head>
 <meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -384,9 +392,9 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <div class="card">
       <h3>📊 Statistik Global</h3>
       <div class="stat-row"><span class="stat-label">Total User</span><span class="stat-val">${users.length}</span></div>
-      <div class="stat-row"><span class="stat-label">Total Saldo Semua User</span><span class="stat-val gold">${users.reduce((a,u)=>a+(u.balance||0),0).toFixed(2)} ★</span></div>
-      <div class="stat-row"><span class="stat-label">Total Bet Semua User</span><span class="stat-val">${users.reduce((a,u)=>a+(u.totalBet||0),0).toFixed(2)} ★</span></div>
-      <div class="stat-row"><span class="stat-label">Total Win Semua User</span><span class="stat-val green">${users.reduce((a,u)=>a+(u.totalWin||0),0).toFixed(2)} ★</span></div>
+      <div class="stat-row"><span class="stat-label">Total Saldo Semua User</span><span class="stat-val gold">${totalBal}K ★</span></div>
+      <div class="stat-row"><span class="stat-label">Total Bet Semua User</span><span class="stat-val">${totalBet}K ★</span></div>
+      <div class="stat-row"><span class="stat-label">Total Win Semua User</span><span class="stat-val green">${totalWin}K ★</span></div>
       <div class="stat-row"><span class="stat-label">Total Spin</span><span class="stat-val">${users.reduce((a,u)=>a+(u.spins||0),0)}</span></div>
       <div class="stat-row"><span class="stat-label">User Banned</span><span class="stat-val red">${users.filter(u=>u.banned).length}</span></div>
     </div>
@@ -414,11 +422,11 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <h3>⚙ Pengaturan Permainan</h3>
     <form id="settingsForm">
       <div class="form-row">
-        <div class="form-group"><label>Min Bet (★)</label><input type="number" id="minBet" value="${settings.minBet}" min="1"/></div>
-        <div class="form-group"><label>Max Bet (★)</label><input type="number" id="maxBet" value="${settings.maxBet}" min="1"/></div>
+        <div class="form-group"><label>Min Bet (perak)</label><input type="number" id="minBet" value="${settings.minBet}" min="1"/></div>
+        <div class="form-group"><label>Max Bet (perak)</label><input type="number" id="maxBet" value="${settings.maxBet}" min="1"/></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label>Saldo Awal User Baru (★)</label><input type="number" id="startBalance" value="${settings.startBalance}" min="0"/></div>
+        <div class="form-group"><label>Saldo Awal User Baru (perak)</label><input type="number" id="startBalance" value="${settings.startBalance}" min="0"/></div>
         <div class="form-group"><label>Scatter Multiplier (×Bet)</label><input type="number" id="scatterMult" value="${settings.scatterMult}" min="1"/></div>
       </div>
       <button type="button" class="save-btn" onclick="saveSettings()">💾 Simpan Pengaturan</button>
@@ -427,15 +435,15 @@ tr:hover td{background:rgba(255,255,255,.02)}
   <div class="section-title">👥 Daftar User</div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Username</th><th>Saldo (★)</th><th>Total Bet</th><th>Total Win</th><th>Spin</th><th>Status</th><th>Aksi</th></tr></thead>
+      <thead><tr><th>Username</th><th>Saldo (K★)</th><th>Total Bet (K)</th><th>Total Win (K)</th><th>Spin</th><th>Status</th><th>Aksi</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="7" style="text-align:center;color:#4a6a8a;padding:24px">Belum ada user</td></tr>'}</tbody>
     </table>
   </div>
 </div>
 <div class="modal-overlay" id="balModal">
   <div class="modal">
-    <h4>💰 Atur Saldo User</h4>
-    <input type="number" id="newBalance" placeholder="Saldo baru (★)" min="0"/>
+    <h4>💰 Atur Saldo User (perak)</h4>
+    <input type="number" id="newBalance" placeholder="mis. 100000 = 100K" min="0"/>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal()">Batal</button>
       <button class="modal-ok" onclick="confirmBalance()">Simpan</button>
@@ -524,8 +532,9 @@ body{min-height:100vh;background:var(--purple-deep);font-family:'Nunito',sans-se
 .stat-star{color:var(--gold);font-size:.75em}
 .bet-group{display:flex;align-items:center;gap:6px;background:rgba(0,0,0,.3);border-radius:30px;padding:4px 10px;border:1px solid rgba(255,215,0,.2)}
 .btn-round{width:30px;height:30px;border-radius:50%;background:rgba(120,120,130,.5);border:1px solid rgba(255,255,255,.15);color:#fff;font-size:18px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s,transform .1s;line-height:1}
-.btn-round:hover{background:rgba(180,180,190,.5)}
-.btn-round:active{transform:scale(.9)}
+.btn-round:hover:not(:disabled){background:rgba(180,180,190,.5)}
+.btn-round:active:not(:disabled){transform:scale(.9)}
+.btn-round:disabled{opacity:.3;cursor:not-allowed}
 .bet-center{text-align:center;min-width:65px}
 .spin-btn{width:clamp(52px,10vw,66px);height:clamp(52px,10vw,66px);border-radius:50%;background:radial-gradient(circle at 38% 38%,#5599ff,#1144cc);border:3px solid #88bbff;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .15s,opacity .2s,box-shadow .2s;box-shadow:0 4px 16px rgba(30,80,220,.55),inset 0 1px 0 rgba(255,255,255,.25);flex-shrink:0}
 .spin-btn:hover:not(:disabled){transform:scale(1.08)}
@@ -593,7 +602,7 @@ body{min-height:100vh;background:var(--purple-deep);font-family:'Nunito',sans-se
           <button class="btn-round" id="betMinus">−</button>
           <div class="bet-center">
             <div class="stat-label">Bet</div>
-            <div class="stat-value" id="betDisplay">10<span class="stat-star">★</span></div>
+            <div class="stat-value" id="betDisplay">5.00K<span class="stat-star">★</span></div>
           </div>
           <button class="btn-round" id="betPlus">+</button>
         </div>
@@ -630,40 +639,113 @@ body{min-height:100vh;background:var(--purple-deep);font-family:'Nunito',sans-se
   </div>
 </div>
 <script>
-const CFG={minBet:${settings.minBet},maxBet:${settings.maxBet},betLevels:[${settings.minBet},${Math.round(settings.minBet*2)},${Math.round(settings.minBet*5)},${Math.round(settings.minBet*10)},${Math.round(settings.minBet*25)},${Math.round(settings.minBet*50)},${settings.maxBet}].filter((v,i,a)=>a.indexOf(v)===i)};
+// UPDATED: bet levels fixed dalam perak, filter sesuai minBet/maxBet dari settings
+const CFG={
+  minBet:${settings.minBet},
+  maxBet:${settings.maxBet},
+  betLevels:[5000,10000,25000,50000,125000,150000,500000].filter(v=>v>=${settings.minBet}&&v<=${settings.maxBet})
+};
+if(CFG.betLevels.length===0)CFG.betLevels=[CFG.minBet];
+
 let audioCtx=null,soundOn=true;
 function getCtx(){if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();return audioCtx}
 function playTone(freq,type,dur,gain=.3,start=0){if(!soundOn)return;try{const c=getCtx(),t=c.currentTime+start,o=c.createOscillator(),g=c.createGain();o.connect(g);g.connect(c.destination);o.type=type;o.frequency.setValueAtTime(freq,t);g.gain.setValueAtTime(gain,t);g.gain.exponentialRampToValueAtTime(.0001,t+dur);o.start(t);o.stop(t+dur)}catch(e){}}
 function playClick(){playTone(800,'square',.05,.15)}
 function playSpinTick(){playTone(200+Math.random()*80,'sawtooth',.07,.07)}
 function playReelStop(i){const f=[300,340,380,420,460];playTone(f[i],'triangle',.15,.25)}
-function playWinSound(amt){if(!soundOn)return;const notes=amt>200?[523,659,784,1047,1319]:[523,659,784,880];notes.forEach((f,i)=>playTone(f,'sine',.25,.3,i*.1))}
+// UPDATED: threshold 200K (dalam perak)
+function playWinSound(amt){if(!soundOn)return;const notes=amt>200000?[523,659,784,1047,1319]:[523,659,784,880];notes.forEach((f,i)=>playTone(f,'sine',.25,.3,i*.1))}
 function playNoWin(){playTone(200,'sawtooth',.18,.15);setTimeout(()=>playTone(160,'sawtooth',.18,.15),100)}
 function playBtn(){playTone(600,'sine',.08,.18)}
 const SYMS=['🍒','🍓','🍇','🍌','🍑','7️⃣','💎','🔔','⭐'];
 const ROWS=3,COLS=5;
-let balance=0,betIdx=1,bet=CFG.betLevels[1]||10,spinning=false,autoLeft=0,autoTimer=null;
+// UPDATED: mulai dari betIdx=0 (5K)
+let balance=0,betIdx=0,bet=CFG.betLevels[0],spinning=false,autoLeft=0,autoTimer=null;
 let grid=Array.from({length:COLS},()=>Array(ROWS).fill('🍒'));
 const rg=document.getElementById('reelsGrid');
 function buildGrid(){rg.innerHTML='';for(let c=0;c<COLS;c++){const col=document.createElement('div');col.style.cssText='display:flex;flex-direction:column;gap:5px';for(let r=0;r<ROWS;r++){const cell=document.createElement('div');cell.className='cell';cell.id='c_'+c+'_'+r;cell.textContent=grid[c][r];col.appendChild(cell)}rg.appendChild(col)}}
 buildGrid();
 function cel(c,r){return document.getElementById('c_'+c+'_'+r)}
-function fmtB(v){return v.toFixed(2)+'<span class="stat-star">★</span>'}
-function updBal(){document.getElementById('balDisplay').innerHTML=fmtB(balance)}
-function updBet(){document.getElementById('betDisplay').innerHTML=bet.toFixed(2)+'<span class="stat-star">★</span>'}
-fetch('/api/me').then(r=>r.json()).then(d=>{balance=d.balance||0;updBal()});
+// UPDATED: tampilkan dalam K
+function fmtK(v){return (v/1000).toFixed(2)+'K<span class="stat-star">★</span>'}
+function updBal(){document.getElementById('balDisplay').innerHTML=fmtK(balance)}
+function updBet(){
+  document.getElementById('betDisplay').innerHTML=fmtK(bet);
+  // UPDATED: disable − di level terkecil, disable + kalau level berikutnya > saldo
+  document.getElementById('betMinus').disabled=(betIdx<=0);
+  const nextBet=CFG.betLevels[betIdx+1];
+  document.getElementById('betPlus').disabled=(betIdx>=CFG.betLevels.length-1)||(nextBet!==undefined&&nextBet>balance);
+}
+fetch('/api/me').then(r=>r.json()).then(d=>{
+  balance=d.balance||0;
+  // UPDATED: turunkan bet ke level yang mampu setelah dapat saldo
+  while(betIdx>0&&bet>balance){betIdx--;bet=CFG.betLevels[betIdx];}
+  updBal();updBet();
+});
 function setMsg(t,big=false){const e=document.getElementById('msgBar');e.textContent=t;e.classList.toggle('big-win',big)}
 function clearWins(){for(let c=0;c<COLS;c++)for(let r=0;r<ROWS;r++){const e=cel(c,r);if(e)e.classList.remove('winner','scatter-hit')}[0,1,2].forEach(i=>{const e=document.getElementById('rl'+i);if(e)e.classList.remove('active')});const b=document.getElementById('winBadge');b.classList.remove('show');setTimeout(()=>b.classList.remove('hide'),300)}
 function spawnCoins(n=8){const w=document.getElementById('reelsWrap');const cx=w.clientWidth/2,cy=w.clientHeight/2;for(let i=0;i<n;i++){const c=document.createElement('div');c.className='coin';c.textContent=['🪙','💰','💵'][Math.floor(Math.random()*3)];const a=(Math.PI*2/n)*i+Math.random()*.5,d=60+Math.random()*80;const tx=Math.cos(a)*d,ty=-(Math.abs(Math.sin(a))*d+40);c.style.cssText='left:'+cx+'px;top:'+cy+'px;--tx:translate('+tx+'px,'+ty+'px);animation-delay:'+Math.random()*.2+'s';w.appendChild(c);setTimeout(()=>c.remove(),1400)}}
 function showSparkles(){const l=document.getElementById('sparkleLayer');l.classList.add('active');l.innerHTML='';const cols=['#FFD700','#FF69B4','#00FFFF','#FF4500','#7FFF00'];for(let i=0;i<60;i++){const s=document.createElement('div');s.className='spark';const x=Math.random()*100,y=Math.random()*100,tx=(Math.random()-.5)*300,ty=(Math.random()-1.2)*400;s.style.cssText='left:'+x+'%;top:'+y+'%;background:'+cols[i%5]+';--tx:translate('+tx+'px,'+ty+'px);animation-delay:'+Math.random()*.4+'s;animation-duration:'+(0.8+Math.random()*.8)+'s';l.appendChild(s)}setTimeout(()=>{l.classList.remove('active');l.innerHTML=''},2200)}
 async function animateReels(serverGrid){const DURS=[350,450,550,650,750],TICK=60;const promises=[];for(let c=0;c<COLS;c++){promises.push(new Promise(res=>{let elapsed=0,tick=0;const iv=setInterval(()=>{for(let r=0;r<ROWS;r++){const e=cel(c,r);if(e){e.classList.add('spinning-cell');e.textContent=SYMS[Math.floor(Math.random()*SYMS.length)]}}tick++;if(tick%2===0)playSpinTick();elapsed+=TICK;if(elapsed>=DURS[c]){clearInterval(iv);for(let r=0;r<ROWS;r++){grid[c][r]=serverGrid[c][r];const e=cel(c,r);if(e){e.classList.remove('spinning-cell');e.textContent=serverGrid[c][r]}}playReelStop(c);res()}},TICK)}))}await Promise.all(promises)}
-async function doSpin(){if(spinning)return;if(balance<bet){setMsg('💸 Saldo tidak cukup!');stopAuto();return}spinning=true;document.getElementById('spinBtn').disabled=true;document.getElementById('spinBtn').classList.add('spinning-anim');clearWins();setMsg('Spinning…');let result;try{const res=await fetch('/api/spin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bet})});result=await res.json();if(result.error){setMsg('⚠ '+result.error);spinning=false;document.getElementById('spinBtn').disabled=false;document.getElementById('spinBtn').classList.remove('spinning-anim');stopAuto();return}}catch(e){setMsg('⚠ Network error');spinning=false;document.getElementById('spinBtn').disabled=false;document.getElementById('spinBtn').classList.remove('spinning-anim');stopAuto();return}balance=result.balance;await animateReels(result.grid);updBal();if(result.win>0){result.winRows.forEach(r=>{document.getElementById('rl'+r)?.classList.add('active');for(let c=0;c<COLS;c++)cel(c,r)?.classList.add('winner')});if(result.scatCount>=3)for(let c=0;c<COLS;c++)for(let r=0;r<ROWS;r++){if(grid[c][r]==='⭐')cel(c,r)?.classList.add('scatter-hit')}const badge=document.getElementById('winBadge');badge.textContent='+'+result.win.toFixed(2);requestAnimationFrame(()=>badge.classList.add('show'));spawnCoins(result.win>100?14:8);playWinSound(result.win);if(result.win>=bet*10){showSparkles();setMsg('🎉 BIG WIN! +'+result.win.toFixed(2)+'★',true)}else setMsg('✨ WIN! +'+result.win.toFixed(2)+'★');setTimeout(()=>{badge.classList.add('hide');badge.classList.remove('show')},2500)}else{playNoWin();setMsg('No win — try again!')}spinning=false;document.getElementById('spinBtn').disabled=false;document.getElementById('spinBtn').classList.remove('spinning-anim');if(autoLeft>0){autoLeft--;updAutoCounter();if(autoLeft===0)stopAuto();else autoTimer=setTimeout(doSpin,900)}}
+async function doSpin(){
+  if(spinning)return;
+  // UPDATED: auto-turunkan bet ke level yang mampu sebelum spin
+  while(betIdx>0&&bet>balance){betIdx--;bet=CFG.betLevels[betIdx];}
+  if(balance<bet){setMsg('💸 Saldo tidak cukup!');stopAuto();return}
+  spinning=true;
+  document.getElementById('spinBtn').disabled=true;
+  document.getElementById('spinBtn').classList.add('spinning-anim');
+  clearWins();setMsg('Spinning…');
+  let result;
+  try{
+    const res=await fetch('/api/spin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bet})});
+    result=await res.json();
+    if(result.error){setMsg('⚠ '+result.error);spinning=false;document.getElementById('spinBtn').disabled=false;document.getElementById('spinBtn').classList.remove('spinning-anim');stopAuto();return}
+  }catch(e){setMsg('⚠ Network error');spinning=false;document.getElementById('spinBtn').disabled=false;document.getElementById('spinBtn').classList.remove('spinning-anim');stopAuto();return}
+  balance=result.balance;
+  await animateReels(result.grid);
+  updBal();
+  // UPDATED: sinkronkan bet setelah saldo berubah
+  while(betIdx>0&&bet>balance){betIdx--;bet=CFG.betLevels[betIdx];}
+  updBet();
+  if(result.win>0){
+    result.winRows.forEach(r=>{document.getElementById('rl'+r)?.classList.add('active');for(let c=0;c<COLS;c++)cel(c,r)?.classList.add('winner')});
+    if(result.scatCount>=3)for(let c=0;c<COLS;c++)for(let r=0;r<ROWS;r++){if(grid[c][r]==='⭐')cel(c,r)?.classList.add('scatter-hit')}
+    const badge=document.getElementById('winBadge');
+    // UPDATED: tampilkan win dalam K
+    badge.textContent='+'+(result.win/1000).toFixed(2)+'K';
+    requestAnimationFrame(()=>badge.classList.add('show'));
+    // UPDATED: threshold coin banyak di 100K
+    spawnCoins(result.win>100000?14:8);
+    playWinSound(result.win);
+    if(result.win>=bet*10){showSparkles();setMsg('🎉 BIG WIN! +'+(result.win/1000).toFixed(2)+'K★',true)}
+    else setMsg('✨ WIN! +'+(result.win/1000).toFixed(2)+'K★');
+    setTimeout(()=>{badge.classList.add('hide');badge.classList.remove('show')},2500)
+  }else{playNoWin();setMsg('No win — try again!')}
+  spinning=false;
+  document.getElementById('spinBtn').disabled=false;
+  document.getElementById('spinBtn').classList.remove('spinning-anim');
+  if(autoLeft>0){
+    autoLeft--;updAutoCounter();
+    // UPDATED: stop auto kalau saldo sudah tidak cukup
+    if(autoLeft===0||balance<bet)stopAuto();
+    else autoTimer=setTimeout(doSpin,900)
+  }
+}
 function updAutoCounter(){const e=document.getElementById('autoCounter');e.textContent=autoLeft>0?autoLeft+' left':''}
 function startAuto(){const v=parseInt(document.getElementById('autoSelect').value);if(v===0)return;autoLeft=v;updAutoCounter();const b=document.getElementById('autoBtn');b.textContent='■ Stop';b.classList.add('active');document.getElementById('betMinus').disabled=true;document.getElementById('betPlus').disabled=true;doSpin()}
-function stopAuto(){autoLeft=0;clearTimeout(autoTimer);updAutoCounter();const b=document.getElementById('autoBtn');b.textContent='▶ Start';b.classList.remove('active');document.getElementById('betMinus').disabled=false;document.getElementById('betPlus').disabled=false}
+function stopAuto(){autoLeft=0;clearTimeout(autoTimer);updAutoCounter();const b=document.getElementById('autoBtn');b.textContent='▶ Start';b.classList.remove('active');updBet();}
 document.getElementById('spinBtn').addEventListener('click',()=>{playBtn();if(!autoLeft)doSpin()});
-document.getElementById('betMinus').addEventListener('click',()=>{playClick();betIdx=Math.max(0,betIdx-1);bet=CFG.betLevels[betIdx];updBet()});
-document.getElementById('betPlus').addEventListener('click',()=>{playClick();betIdx=Math.min(CFG.betLevels.length-1,betIdx+1);bet=CFG.betLevels[betIdx];updBet()});
+document.getElementById('betMinus').addEventListener('click',()=>{
+  if(betIdx<=0)return;
+  playClick();betIdx--;bet=CFG.betLevels[betIdx];updBet();
+});
+document.getElementById('betPlus').addEventListener('click',()=>{
+  const next=betIdx+1;
+  // UPDATED: tidak boleh naik kalau level berikutnya melebihi saldo
+  if(next>=CFG.betLevels.length||CFG.betLevels[next]>balance)return;
+  playClick();betIdx=next;bet=CFG.betLevels[betIdx];updBet();
+});
 document.getElementById('autoBtn').addEventListener('click',()=>{playBtn();autoLeft>0?stopAuto():startAuto()});
 document.getElementById('soundBtn').addEventListener('click',()=>{soundOn=!soundOn;const b=document.getElementById('soundBtn');b.textContent=soundOn?'🔊':'🔇';b.classList.toggle('on',soundOn);playClick()});
 document.addEventListener('keydown',e=>{if(e.code==='Space'&&!spinning&&!autoLeft){e.preventDefault();playBtn();doSpin()}});
@@ -715,7 +797,8 @@ export default {
       const existing = await getUser(env, username);
       if (existing) return html(pageLogin('Username sudah dipakai'));
       const settings = await getSettings(env);
-      const user = { username, passwordHash: await hashPwd(password), balance: settings.startBalance || 1000, totalBet: 0, totalWin: 0, spins: 0, banned: false, createdAt: Date.now() };
+      // UPDATED: fallback saldo awal 100K
+      const user = { username, passwordHash: await hashPwd(password), balance: settings.startBalance || 100000, totalBet: 0, totalWin: 0, spins: 0, banned: false, createdAt: Date.now() };
       await putUser(env, username, user);
       const cookie = await makeSession({ username, role: 'user' }, env);
       return redirect('/', { 'Set-Cookie': cookie });
