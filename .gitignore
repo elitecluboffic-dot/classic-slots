@@ -1,0 +1,10 @@
+node_modules/
+.wrangler/
+dist/
+
+# JANGAN PERNAH commit file ini:
+.dev.vars
+*.env
+.env
+.env.local
+secrets.txt
